@@ -12,7 +12,7 @@ class TrainingHandler:
     ADD
     '''
 
-    def __init__(self, path, episodes=20):
+    def __init__(self, path, episodes=10000):
         '''
         ADD
         '''
