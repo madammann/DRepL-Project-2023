@@ -1,7 +1,7 @@
-import tensorflow as tf
+ import tensorflow as tf
 
 class InMemoryReplayBuffer:
-    def __init__(self, state_shape, action_shape, reward_shape, buffer_size=100000):
+    def __init__(self, state_shape=(50, 75, 3), action_shape=(4,), reward_shape=(1,), buffer_size=64000):
         '''
         Initialization method for the replay buffer.
         
@@ -20,27 +20,29 @@ class InMemoryReplayBuffer:
         self.state_shape = state_shape
         self.action_shape = action_shape
         self.reward_shape = reward_shape
-        self.terminal_shape = terminal_shape
         
         #initial empty tensors for each element
-        self.states = tf.zeros((0, *state_shape),dtype=tf.float32)
-        self.actions = tf.zeros((0, *action_shape),dtype=tf.float32)
-        self.rewards = tf.zeros((0, *reward_shape),dtype=tf.float32)
-        self.sucessors = tf.zeros((0, *state_shape),dtype=tf.float32)
-        self.terminals = tf.zeros((0, 1),dtype=tf.float32)
+        self.states = tf.zeros((0, *state_shape), dtype=tf.float32)
+        self.actions = tf.zeros((0, *action_shape), dtype=tf.float32)
+        self.rewards = tf.zeros((0, *reward_shape), dtype=tf.float32)
+        self.successors = tf.zeros((0, *state_shape), dtype=tf.float32)
+        self.terminals = tf.zeros((0, 1), dtype=tf.bool)
         
         #counter to avoid calling len
         self.count = 0
+    
+    def __len__(self):
+        return self.count
     
     def add(self, episode_batch):
         '''
         Method to add new samples into the replay buffer.
         
-        :param episode_batch: A tensor with the shape (batch, 5) with dtype=tf.float32.
+        :param episode_batch (list): A tuple of tensors (states, actions, rewards, successors, terminals).
         '''
         
         #since the length of episodes can be dynamic, we retrieve the length here
-        episode_length = episode_batch[0].shape[0]
+        episode_length = len(episode_batch)
         
         #if the buffer is full or would be overflowing, we delete the episode_length oldest batches from each tensor
         if episode_length + self.count > self.buffer_size:
@@ -51,7 +53,7 @@ class InMemoryReplayBuffer:
             self.states = tf.slice(self.states, [overflow_length, 0], [self.states.shape[0]-overflow_length, *state_shape[1:]])
             self.actions = tf.slice(self.actions, [overflow_length, 0], [self.actions.shape[0]-overflow_length, *self.action_shape[1:]])
             self.rewards = tf.slice(self.rewards, [overflow_length, 0], [self.rewards.shape[0]-overflow_length, *self.reward_shape[1:]])
-            self.sucessors = tf.slice(self.sucessors, [overflow_length, 0], [self.sucessors.shape[0]-overflow_length, *self.state_shape[1:]])
+            self.successors = tf.slice(self.successors, [overflow_length, 0], [self.successors.shape[0]-overflow_length, *self.state_shape[1:]])
             self.terminals = tf.slice(self.terminals, [overflow_length, 0], [self.terminals.shape[0]-overflow_length, *self.terminal_shape[1:]])
         
         #we concatenate the samples onto the existing tensors
@@ -66,13 +68,12 @@ class InMemoryReplayBuffer:
             self.count += episode_length
     
     @tf.function
-    def sample(self, batch_count, batch_size):
+    def sample(self, batch_count=1000, batch_size=64):
         '''
         Method to sample elements from the replay buffer.
         
         :param batch_count (int): The number of batches to sample from the buffer.
         :param batch_size (int): The size of each batch.
-        :param duplicate (bool): Flag whether duplicate sampling is allowed or not.
         
         :returns (tf.data.Dataset): A dataset with shuffled batches with specified size of specified length sampled from the buffer.
         '''
@@ -81,7 +82,7 @@ class InMemoryReplayBuffer:
             raise IndexError(f'Requested more samples than existing for buffer size: {self.buffer_size}')
             
         #create a dataset with the requested parameters and returns it
-        dataset = tf.data.Dataset.from_tensor_slices((self.states, self.actions, self.rewards, self.sucessors, self.terminals))
+        dataset = tf.data.Dataset.from_tensor_slices((self.states, self.actions, self.rewards, self.successors, self.terminals))
         dataset = dataset.shuffle(buffer_size=self.buffer_size)
         dataset = dataset.batch(batch_size)
         dataset = dataset.prefetch(tf.data.AUTOTUNE)

@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 
 import gym
@@ -7,18 +8,20 @@ from PIL import Image
 class Environment:
     '''Wrapper class for the Lunar Lander environment from gym.'''
     
-    def __init__(self, visual=True, greyscale=True):
+    def __init__(self, visual=True, rgb=True):
         '''
         Constructor method for the environment, defaults to creating an environment with image observations in greyscale of shape (50,75,1).
         
         :param visual (bool): A Boolean whether the observation created by the environment should be visual (50,75,rgb) for True, or a (8,) tensor.
-        :param greyscale (bool): A Boolean whether to turn the image observation greyscale or not.
+        :param rgb (bool): A Boolean whether to turn the image observation rgb or not.
         '''
         
         self.visual = visual
-        self.greyscale = greyscale
+        self.rgb = rgb
         
         self.env = gym.make("LunarLander-v2", continuous=False, gravity=-10.0, enable_wind=False, wind_power=15.0, render_mode='rgb_array')
+        self.env.reset()
+        self.terminal = False
         
     def step(self, action : int):
         '''
@@ -27,7 +30,8 @@ class Environment:
         :returns (tuple): (observation : tf.tensor, reward : tf.tensor, terminal : tf.tensor) tuple with observation and reward in float32 dtype and terminal in bool dtype.
         '''
         
-        observation, reward, terminal, truncated, info = env.step(action)
+        observation, reward, terminal, truncated, info = self.env.step(action)
+        self.terminal = terminal
         
         if self.visual:
             return self._get_image(), tf.constant([reward], dtype=tf.float32), tf.constant([terminal], dtype=tf.bool)
@@ -41,17 +45,22 @@ class Environment:
         '''
         
         self.env.reset()
+        self.terminal = False
         
     def do_random_action(self):
         '''
         Method for performing a random action in the environment.
         
-        :returns (tuple): (observation : tf.tensor, reward : tf.tensor, terminal : tf.tensor) tuple with observation and reward in float32 dtype and terminal in bool dtype.
+        :returns (tuple): (action : tf.tensor, observation : tf.tensor, reward : tf.tensor, terminal : tf.tensor) tuple with observation, action, and reward in float32 dtype and terminal in bool dtype.
         '''
         
         action = self.env.action_space.sample()
         
-        return self.step(action)
+        return tf.constant([action], dtype=tf.float32), *self.step(action)
+    
+    @property
+    def observation(self):
+        return self._get_image()
     
     def close(self):
         '''
@@ -70,11 +79,11 @@ class Environment:
         img = self.env.render()
         
         #we rescale the image down from (400,600) to (50,75) and make it greyscale
-        img = Image(img).resize((img.shape[1] // 8, img.shape[0] // 8))
-        img = img.convert(mode='L') if greyscale else img
+        img = Image.fromarray(img).resize((img.shape[1] // 8, img.shape[0] // 8))
+        img = img.convert(mode='L') if not self.rgb else img
         
         #we return the image as tf.tensor of shape (50,75,1) for greyscale or (50,75,3) for non greyscale RGB
-        return tf.constant(np.expand_dims(np.array(img), -1), dtype=tf.float32) if greyscale else tf.constant(np.array(img), dtype=tf.float32)
+        return tf.constant(np.expand_dims(np.array(img), -1), dtype=tf.float32) if not self.rgb else tf.constant(np.array(img), dtype=tf.float32)
     
 def visualize_episodes(example_episodes : list):
     '''

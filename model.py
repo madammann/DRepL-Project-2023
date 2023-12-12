@@ -127,7 +127,7 @@ class MLPFeatureExtractor(tf.keras.Model):
         return x
     
 class DeepQNetwork(tf.keras.Model):
-    def __init__(self, optimizer, visual=False, rgb=False, cnn_depth=1, mlp_layers=1, head_layers=1, filters=1, kernel_size=3, k_init='glorot_uniform', b_init='zeros'):
+    def __init__(self, optimizer, visual=False, rgb=True, cnn_depth=1, mlp_layers=1, head_layers=1, filters=1, kernel_size=3, k_init='glorot_uniform', b_init='zeros'):
         '''
         Constructor method for the DeepQNetworks with MLP and CNN options and MLP policy head.
         
