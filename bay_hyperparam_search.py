@@ -58,6 +58,8 @@ SEARCH_SPACE_BORDERS = {
     'replay_ratio' : (0.01, 0.99)
 }
 
+#for search keep initial random buffer(s) in memory/drive between searches
+
 class CustomBayesianHyperparameterOptimizer:
     '''
     ADD
