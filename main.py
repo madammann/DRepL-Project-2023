@@ -9,19 +9,20 @@ from training import train
 DATA_PATH = 'D:/experiment_data_DREPL/'
 
 DEFAULT_PARAMS = {
-    'batches_per_epoch' : 1000,
+    'batches_per_epoch' : 300,
     'learning_rate' : 0.001,
     'gamma' : 0.9,
     'epsilon' : 0.9,
     'epsilon_decay' : 0.97,
-    'buffer_size_in_batches' : 10000,
+    'buffer_size_in_batches' : 3000,
     'batch_size' : 16,
-    'replay_ratio' : 0.1,
-    'polyak_avg_fac' : 0.995
+    'replay_ratio' : 0.05,
+    'polyak_avg_fac' : 0.995,
+    'scaling_fac' : 4
 }
 
 STATIC_MLP = {
-    'epochs' : 50,
+    'epochs' : 100,
     'visual' : False,
     'rgb' : False,
     'cnn_depth' : 2,
@@ -34,7 +35,7 @@ STATIC_MLP = {
 }
 
 STATIC_CNN = {
-    'epochs' : 50,
+    'epochs' : 100,
     'visual' : True,
     'rgb' : False,
     'cnn_depth' : 2,
@@ -59,7 +60,7 @@ def main(args):
     ADD
     '''
 
-    cnn_params = {key : val for key, val in list(DEFAULT_PARAMS.items())+list(STATIC_MLP.items())}
+    cnn_params = {key : val for key, val in list(DEFAULT_PARAMS.items())+list(STATIC_CNN.items())}
     mlp_params = {key : val for key, val in list(DEFAULT_PARAMS.items())+list(STATIC_MLP.items())}
 
     #if rgb argument is provided as false we change that in the params
@@ -67,7 +68,7 @@ def main(args):
         cnn_params['rgb'], mlp_params['rgb'] = False, False
 
     #we create an empty dataframe
-    columns=['MODEL_NAME','MODEL ID','EPOCH','AVG TD-ERROR']
+    columns=['MODEL_NAME','MODEL ID','EPOCH','AVG TD-ERROR','AVG SAMPLING RETURN']
     df = pd.DataFrame(columns=columns)
 
     #we load in the data if it exists into the empty dataframe

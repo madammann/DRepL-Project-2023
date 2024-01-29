@@ -6,7 +6,7 @@ class ModelHead(tf.keras.Model):
     The ModelHead part of either model, a fully-connected network processing an embedding into a (4,) continous output.
     '''
 
-    def __init__(self, layers=1, k_init='glorot_uniform', b_init='zeros'):
+    def __init__(self, layers=1, k_init='glorot_uniform', b_init='zeros', scaling_fac=2):
         '''
         Constructor method for the ModelHead model part.
 
@@ -20,12 +20,12 @@ class ModelHead(tf.keras.Model):
         super(ModelHead, self).__init__()
 
         if layers < 2:
-            self.model_layers = [tf.keras.layers.Dense(units=30, activation='relu', kernel_initializer=k_init, bias_initializer=b_init)]
+            self.model_layers = [tf.keras.layers.Dense(units=(600//scaling_fac//2+400//scaling_fac//2), activation='relu', kernel_initializer=k_init, bias_initializer=b_init)]
 
         else:
-            self.model_layers = [tf.keras.layers.Dense(units=30, activation='relu', kernel_initializer=k_init, bias_initializer=b_init) for _ in range(layers)]
+            self.model_layers = [tf.keras.layers.Dense(units=(600//scaling_fac//2+400//scaling_fac//2), activation='relu', kernel_initializer=k_init, bias_initializer=b_init) for _ in range(layers)]
 
-        self.q_val_layer = tf.keras.layers.Dense(units=4, activation='sigmoid', kernel_initializer=k_init, bias_initializer=b_init)
+        self.q_val_layer = tf.keras.layers.Dense(units=4, activation=None, kernel_initializer=k_init, bias_initializer=b_init)
 
     @tf.function
     def __call__(self, x):
@@ -36,7 +36,6 @@ class ModelHead(tf.keras.Model):
 
         :returns (tuple): The final output of the model as tuple of q_value and policy (val : tf.tensor(batch, 1), pol : tf.tensor(batch, 4)).
         '''
-
         for layer in self.model_layers:
             x = layer(x)
 
@@ -60,6 +59,8 @@ class CNNFeatureExtractor(tf.keras.Model):
 
         super(CNNFeatureExtractor, self).__init__()
 
+        self.flatten = tf.keras.layers.Flatten()
+
         self.model_layers = [
             tf.keras.layers.Conv2D(filters=filters, kernel_size=kernel_size, strides=1, padding='same', activation='relu', kernel_initializer=k_init, bias_initializer=b_init) for _ in range(cnn_depth)
         ]
@@ -72,13 +73,15 @@ class CNNFeatureExtractor(tf.keras.Model):
     @tf.function
     def __call__(self, x):
         '''
-        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 75, 50, 1).
+        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 200, 300, 1).
 
-        :returns (tf.Tensor): The output of the feature extractor as tensor of shape (batch, 18, 12,1).
+        :returns (tf.Tensor): The output of the feature extractor as tensor of shape (batch, 100, 150,1).
         '''
 
         for layer in self.model_layers:
             x = layer(x)
+
+        x = self.flatten(x)
 
         return x
 
@@ -87,7 +90,7 @@ class MLPFeatureExtractor(tf.keras.Model):
     The Multi Layer Perceptron Feature Extractor to be used before the PolicyHead of the model.
     '''
 
-    def __init__(self, layers=1, k_init='glorot_uniform', b_init='zeros', rgb=False):
+    def __init__(self, layers=1, k_init='glorot_uniform', b_init='zeros', rgb=False, scaling_fac=2):
         '''
         Constructor method for the MLPFeatureExtractor model part.
 
@@ -102,21 +105,20 @@ class MLPFeatureExtractor(tf.keras.Model):
         self.flatten = tf.keras.layers.Flatten()
 
         if layers < 1:
-            selfmodel_layers.model_layers = [tf.keras.layers.Dense(units=125*(int(rgb)*3), activation='relu', kernel_initializer=k_init, bias_initializer=b_init)]
+            self.model_layers.model_layers = [tf.keras.layers.Dense(units=(600//scaling_fac+400//scaling_fac)*(int(rgb)*3), activation='relu', kernel_initializer=k_init, bias_initializer=b_init)]
 
         else:
-            self.model_layers = [tf.keras.layers.Dense(units=125*(int(rgb)*3), activation='relu', kernel_initializer=k_init, bias_initializer=b_init) for _ in range(layers)]
+            self.model_layers = [tf.keras.layers.Dense(units=(600//scaling_fac+400//scaling_fac)*(int(rgb)*3), activation='relu', kernel_initializer=k_init, bias_initializer=b_init) for _ in range(layers)]
 
     @tf.function
     def __call__(self, x):
         '''
         Call method for the MLPFeatureExtractor model part.
 
-        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 75, 50, 1).
+        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 300, 200, 1).
 
-        :returns (tf.tensor): The output tensor with varying shape based on last Dense layer, defaults (batch, 125) or (batch, 125*3) for RGB.
+        :returns (tf.tensor): The output tensor with varying shape based on last Dense layer, defaults (batch, 250) or (batch, 250*3) for RGB.
         '''
-
         x = self.flatten(x)
 
         for layer in self.model_layers:
@@ -125,7 +127,7 @@ class MLPFeatureExtractor(tf.keras.Model):
         return x
 
 class DeepQNetwork(tf.keras.Model):
-    def __init__(self, optimizer, visual=False, rgb=True, cnn_depth=1, mlp_layers=1, head_layers=1, filters=1, kernel_size=3, k_init='glorot_uniform', b_init='zeros'):
+    def __init__(self, optimizer, visual=False, rgb=True, cnn_depth=1, mlp_layers=1, head_layers=1, filters=1, kernel_size=3, k_init='glorot_uniform', b_init='zeros', scaling_fac=2):
         '''
         Constructor method for the DeepQNetworks with MLP and CNN options and MLP policy head.
 
@@ -156,14 +158,15 @@ class DeepQNetwork(tf.keras.Model):
             'filters' : filters,
             'kernel_size' : kernel_size,
             'k_init' : k_init,
-            'b_init' : b_init
+            'b_init' : b_init,
+            'scaling_fac' : scaling_fac
         }
 
         #we store the optimizer in a variable
         self.optimizer = optimizer
 
         #we build the model
-        self.model_layers = [ModelHead(layers=head_layers, k_init=k_init, b_init=b_init)]
+        self.model_layers = [ModelHead(layers=head_layers, k_init=k_init, b_init=b_init, scaling_fac=scaling_fac)]
 
         #if a visual model, we insert a feature extractor in front of the classifier
         if visual:
@@ -171,14 +174,14 @@ class DeepQNetwork(tf.keras.Model):
 
         #else insert a MLP for feature extraction in front
         else:
-            self.model_layers.insert(0, MLPFeatureExtractor(layers=mlp_layers, k_init=k_init, b_init=b_init, rgb=rgb))
+            self.model_layers.insert(0, MLPFeatureExtractor(layers=mlp_layers, k_init=k_init, b_init=b_init, rgb=rgb, scaling_fac=scaling_fac))
 
     @tf.function
     def __call__(self, x):
         '''
         Call method for the MLPFeatureExtractor model part.
 
-        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 75, 50, c) for image input, with c color channels.
+        :param x (tf.tensor): The input tensor, expected to be of shape (batch, 300, 200, c) for image input, with c color channels.
 
         :returns (tf.Tensor): The final output of the model as tensor of shape (batch, 4).
         '''
@@ -215,13 +218,13 @@ class DeepQNetwork(tf.keras.Model):
         :param path_affix (str): An additional string to be used inside the directory at path as an affix to the "weights.h5" and "optimizer.txt".
         '''
 
-        #loading in the model weights and setting built to true
-        self.built = True
-        self.__call__(tf.random.normal((1, 75, 50, 3 if self.config_parameters['rgb'] else 1), dtype=tf.float32))
-        self.load_weights(path+path_affix+'weights.h5')
-
         #loading in the model optimizer state and config parameters by splitting them
         with open(path+path_affix+'optimizer.txt', 'r') as f:
             dictionary = ast.literal_eval(f.read())
             self.config_parameters = {key : val for key, val in dictionary.items() if key in self.config_parameters.keys()}
             self.optimizer.from_config({key : val for key, val in dictionary.items() if not key in self.config_parameters.keys()})
+
+        #loading in the model weights and setting built to true
+        self.built = True
+        self.__call__(tf.random.normal((1, 600//self.config_parameters['scaling_fac'], 400//self.config_parameters['scaling_fac'], 3 if self.config_parameters['rgb'] else 1), dtype=tf.float32))
+        self.load_weights(path+path_affix+'weights.h5')

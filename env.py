@@ -8,7 +8,7 @@ from PIL import Image
 class Environment:
     '''Wrapper class for the Lunar Lander environment from gym.'''
 
-    def __init__(self, rgb=True):
+    def __init__(self, rgb=True, scaling_fac=2):
         '''
         Constructor method for the environment, defaults to creating an environment with image observations in greyscale of shape (50,75,1).
 
@@ -17,6 +17,7 @@ class Environment:
         '''
 
         self.rgb = rgb
+        self.scaling_fac = scaling_fac
 
         self.env = gym.make("LunarLander-v2", continuous=False, gravity=-10.0, enable_wind=False, wind_power=15.0, render_mode='rgb_array')
         self.env.reset()
@@ -80,11 +81,11 @@ class Environment:
 
         img = self.env.render()
 
-        #we rescale the image down from (400,600) to (50,75) and make it greyscale
-        img = Image.fromarray(img).resize((img.shape[1] // 8, img.shape[0] // 8))
+        #we rescale the image down from (400,600) to (200,300) and make it greyscale
+        img = Image.fromarray(img).resize((img.shape[1] // self.scaling_fac, img.shape[0] // self.scaling_fac))
         img = img.convert(mode='L') if not self.rgb else img
 
-        #we return the image as tf.tensor of shape (50,75,1) for greyscale or (50,75,3) for non greyscale RGB
+        #we return the image as tf.tensor of shape (200,300,1) for greyscale or (200,300,3) for non greyscale RGB
         return tf.constant(np.expand_dims(np.array(img), -1), dtype=tf.float32) if not self.rgb else tf.constant(np.array(img), dtype=tf.float32)
 
 def visualize_episodes(example_episodes : list):

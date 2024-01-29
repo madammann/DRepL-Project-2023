@@ -1,4 +1,5 @@
 import random
+import gc
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ def sample_random_episode(env):
     env.reset()
     previous_state = env.observation
     episode_batch = []
+    reward = 0
 
     #while the episode has not reached a terminal state
     while not env.terminal:
@@ -31,17 +33,21 @@ def sample_random_episode(env):
         #we overwrite the previous state
         previous_state = successor
 
-    return episode_batch
+    return episode_batch, reward
 
 def random_initial_sampling(buffer, env, params):
     with tf.device('/cpu:0'):
         with tqdm(total=params['buffer_size_in_batches']*params['batch_size'],desc='Filling initial buffer') as pbar:
             #we create environments to sample with synchronously with thread pooling
-            envs = [deepcopy(env) for _ in range(5)] + [env]
+            envs = [deepcopy(env) for _ in range(3)] + [env]
 
-            with Pool(6) as pool:
+            with Pool(4) as pool:
                 while len(buffer) < params['buffer_size_in_batches']*params['batch_size']:
                     episode_batches = pool.starmap(sample_random_episode,[(env,) for env in envs])
+
+                    sampling_returns = [elem for a, elem in episode_batches]
+                    episode_batches = [elem for elem, b in episode_batches]
+
                     episode_batches = [elem for stack in episode_batches for elem in stack]
 
                     #reshape the data into a list of tensors with the batch
@@ -51,8 +57,11 @@ def random_initial_sampling(buffer, env, params):
 
                     #add the sampled episode to the buffer
                     buffer.add(episode_batches)
-            
+
             del envs
+            gc.collect()
+
+    return np.mean([val.numpy() for val in sampling_returns])
 
 def training_loop(model, target_model, buffer, params, epoch):
     with tf.device('/gpu:0'):
@@ -81,7 +90,7 @@ def training_loop(model, target_model, buffer, params, epoch):
                 gradient = tape.gradient(td_errors, model.trainable_variables)
 
                 model.optimizer.apply_gradients(zip(gradient, model.trainable_variables))
-                
+
         #we ensure the deletion of the sample just to make sure
         del data
 
@@ -96,6 +105,7 @@ def sample_episode_step(env, model, epsilon):
     env.reset()
     episode_batch = []
     previous_state = env.observation
+    reward = 0
 
     #while the episode has not reached a terminal state
     while not env.terminal:
@@ -117,16 +127,16 @@ def sample_episode_step(env, model, epsilon):
         #we overwrite the previous state
         previous_state = successor
 
-    return episode_batch
+    return episode_batch, reward
 
 def sampling(env, model, buffer, params, epoch):
     '''
     ADD
     '''
-    
+
     #we calculate the epsilon for the current epoch here
     epsilon = params['epsilon']*params['epsilon_decay']**epoch
-    
+
     with tf.device('/cpu:0'):
         with tqdm(total=int(params['buffer_size_in_batches']*params['batch_size']*params['replay_ratio']),desc='Filling buffer with new elements') as pbar:
             count = 0
@@ -136,6 +146,10 @@ def sampling(env, model, buffer, params, epoch):
             with ThreadPool(6) as pool:
                 while count < params['replay_ratio'] * params['buffer_size_in_batches'] * params['batch_size']:
                     episode_batches = pool.starmap(sample_episode_step,[(env, model, epsilon) for env in envs])
+
+                    sampling_returns = [elem for a, elem in episode_batches]
+                    episode_batches = [elem for elem, b in episode_batches]
+
                     episode_batches = [elem for stack in episode_batches for elem in stack]
 
                     #reshape the data into a list of tensors with the batch
@@ -147,8 +161,11 @@ def sampling(env, model, buffer, params, epoch):
 
                     #add the sampled episode to the buffer
                     buffer.add(episode_batches)
-            
+
             del envs
+            gc.collect()
+
+    return np.mean([val.numpy() for val in sampling_returns])
 
 def train(params : dict, path : str, model_name : str, model_id : int, df):
     '''
@@ -162,7 +179,7 @@ def train(params : dict, path : str, model_name : str, model_id : int, df):
     :returns (tuple): Returns a tuple of data in form of (avg_td_errors : list, traintimes : list), each list is a list of floats.
     '''
 
-    env = Environment(rgb=params['rgb'])
+    env = Environment(rgb=params['rgb'], scaling_fac=params['scaling_fac'])
 
     model = DeepQNetwork(
         tf.keras.optimizers.SGD(learning_rate=params['learning_rate']),
@@ -174,7 +191,8 @@ def train(params : dict, path : str, model_name : str, model_id : int, df):
         filters=params['filters'],
         kernel_size=params['kernel_size'],
         k_init=params['k_init'],
-        b_init=params['b_init']
+        b_init=params['b_init'],
+        scaling_fac=params['scaling_fac']
     )
 
     target_model = DeepQNetwork(
@@ -187,13 +205,14 @@ def train(params : dict, path : str, model_name : str, model_id : int, df):
         filters=params['filters'],
         kernel_size=params['kernel_size'],
         k_init=params['k_init'],
-        b_init=params['b_init']
+        b_init=params['b_init'],
+        scaling_fac=params['scaling_fac']
     )
 
-    buffer = InMemoryReplayBuffer(state_shape=(50, 75, 3) if params['rgb'] else (50, 75, 1), buffer_size=params['buffer_size_in_batches']*params['batch_size'])
-    
+    buffer = InMemoryReplayBuffer(state_shape=(400//params['scaling_fac'], 600//params['scaling_fac'], 3) if params['rgb'] else (400//params['scaling_fac'], 600//params['scaling_fac'], 1), buffer_size=params['buffer_size_in_batches']*params['batch_size'])
+
     #we fill the initial replay buffer with random actions
-    random_initial_sampling(buffer, env, params)
+    avg_sampling_return = random_initial_sampling(buffer, env, params)
 
     #we declare lists to store td_error
     avg_td_errors = []
@@ -202,8 +221,8 @@ def train(params : dict, path : str, model_name : str, model_id : int, df):
     for epoch in range(params['epochs']):
         if epoch > 0:
             #we fill the buffer with new samples for the next epoch using the current network
-            sampling(env, model, buffer, params, epoch)
-            
+            avg_sampling_return = sampling(env, model, buffer, params, epoch)
+
         avg_td_error = training_loop(model, target_model, buffer, params, epoch+1)
 
         #after the epoch we update the target network with polyak-averaging
@@ -213,13 +232,14 @@ def train(params : dict, path : str, model_name : str, model_id : int, df):
         model.save(path, path_affix=f'{model_name}_id{model_id}_ep{epoch+1}_')
 
         #we store training data in df
-        df = pd.concat([df,pd.DataFrame([[model_name, model_id, epoch+1, avg_td_error]], columns=df.columns)])
+        df = pd.concat([df,pd.DataFrame([[model_name, model_id, epoch+1, avg_td_error, float(avg_sampling_return)]], columns=df.columns)])
         df.to_csv(path+'data.csv', index=None)
 
-        print(f'Finished epoch {epoch+1}/{params["epochs"]} with an average td error of {avg_td_error}.')
-    
+        print(f'Finished epoch {epoch+1}/{params["epochs"]} with an average td error of {avg_td_error} and average return of {avg_sampling_return}.')
+
     #we ensure proper garbage collection when training is done and data was saved
     del buffer
     del model
     del df
     del env
+    gc.collect()

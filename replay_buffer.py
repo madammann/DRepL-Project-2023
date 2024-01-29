@@ -1,4 +1,5 @@
 import tensorflow as tf
+import gc
 
 class InMemoryReplayBuffer:
     def __init__(self, state_shape=(50, 75, 3), action_shape=(1,), reward_shape=(1,), buffer_size=1000):
@@ -60,14 +61,15 @@ class InMemoryReplayBuffer:
             self.successors = tf.slice(self.successors, [overflow_length, *tuple([0 for _ in range(len(self.state_shape))])], [self.successors.shape[0]-overflow_length, *self.state_shape])
             self.terminals = tf.slice(self.terminals, [overflow_length, 0], [self.terminals.shape[0]-overflow_length, 1])
 
+            gc.collect()
+
         #if the buffer is not full, we update the count with the number of added elements
         if self.count != self.buffer_size:
             self.count += episode_batch[0].shape[0]
-            
+
             if self.count > self.buffer_size:
                 self.count = self.buffer_size
 
-    @tf.function
     def sample(self, batch_count=1000, batch_size=64):
         '''
         Method to sample elements from the replay buffer.
