@@ -9,20 +9,20 @@ from training import train
 DATA_PATH = 'D:/experiment_data_DREPL/'
 
 DEFAULT_PARAMS = {
-    'batches_per_epoch' : 300,
+    'batches_per_epoch' : 1000,
     'learning_rate' : 0.001,
     'gamma' : 0.9,
     'epsilon' : 0.9,
     'epsilon_decay' : 0.97,
-    'buffer_size_in_batches' : 3000,
+    'buffer_size_in_batches' : 5000,
     'batch_size' : 16,
-    'replay_ratio' : 0.05,
+    'replay_ratio' : 0.1,
     'polyak_avg_fac' : 0.995,
     'scaling_fac' : 4
 }
 
 STATIC_MLP = {
-    'epochs' : 100,
+    'epochs' : 40,
     'visual' : False,
     'rgb' : False,
     'cnn_depth' : 2,
@@ -35,7 +35,7 @@ STATIC_MLP = {
 }
 
 STATIC_CNN = {
-    'epochs' : 100,
+    'epochs' : 40,
     'visual' : True,
     'rgb' : False,
     'cnn_depth' : 2,

@@ -40,7 +40,7 @@ class Environment:
         observation, reward, terminal, truncated, info = self.env.step(action)
         self.terminal = bool(terminal)
 
-        return self._get_image(), tf.constant([reward], dtype=tf.float32), tf.constant([terminal], dtype=tf.bool)
+        return self._get_image(), np.array([reward], dtype=np.float32), np.array([terminal], dtype=np.bool)
 
     def reset(self):
         '''
@@ -59,7 +59,7 @@ class Environment:
 
         action = self.env.action_space.sample()
 
-        return tf.constant([action], dtype=tf.int32), *self.step(action)
+        return np.array([action], dtype=np.int32), *self.step(action)
 
     @property
     def observation(self):
@@ -86,7 +86,7 @@ class Environment:
         img = img.convert(mode='L') if not self.rgb else img
 
         #we return the image as tf.tensor of shape (200,300,1) for greyscale or (200,300,3) for non greyscale RGB
-        return tf.constant(np.expand_dims(np.array(img), -1), dtype=tf.float32) if not self.rgb else tf.constant(np.array(img), dtype=tf.float32)
+        return np.expand_dims(np.array(img), -1).astype(np.float32) if not self.rgb else np.array(img).astype(np.float32)
 
 def visualize_episodes(example_episodes : list):
     '''

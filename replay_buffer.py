@@ -1,5 +1,7 @@
-import tensorflow as tf
 import gc
+
+import numpy as np
+import tensorflow as tf
 
 class InMemoryReplayBuffer:
     def __init__(self, state_shape=(50, 75, 3), action_shape=(1,), reward_shape=(1,), buffer_size=1000):
@@ -11,7 +13,7 @@ class InMemoryReplayBuffer:
         :param reward_shape (tuple): A tuple representing the shape of the tensor for a reward.
         :param buffer_size (int): The maximum size of the replay buffer, default is 100.000 elements.
 
-        NOTE: buffer_size has to be compatible with available memory and dataset.shuffle() limits.
+        NOTE: buffer_size has to be compatible with available memory limits.
         '''
 
         #maximum size of the buffer
@@ -23,11 +25,11 @@ class InMemoryReplayBuffer:
         self.reward_shape = reward_shape
 
         #initial empty tensors for each element
-        self.states = tf.zeros((0, *state_shape), dtype=tf.float32)
-        self.actions = tf.zeros((0, *action_shape), dtype=tf.int32)
-        self.rewards = tf.zeros((0, *reward_shape), dtype=tf.float32)
-        self.successors = tf.zeros((0, *state_shape), dtype=tf.float32)
-        self.terminals = tf.zeros((0, 1), dtype=tf.bool)
+        self.states = np.zeros((0, *state_shape), dtype=np.int16)
+        self.actions = np.zeros((0, *action_shape), dtype=np.int8)
+        self.rewards = np.zeros((0, *reward_shape), dtype=np.float32)
+        self.successors = np.zeros((0, *state_shape), dtype=np.int16)
+        self.terminals = np.zeros((0, 1), dtype=np.bool)
 
         #counter to avoid calling len
         self.count = 0
@@ -39,15 +41,15 @@ class InMemoryReplayBuffer:
         '''
         Method to add new samples into the replay buffer.
 
-        :param episode_batch (list): A tuple of tensors (states, actions, rewards, successors, terminals).
+        :param episode_batch (list): A tuple of np.arrays (states, actions, rewards, successors, terminals).
         '''
 
         #we concatenate the samples onto the existing tensors
-        self.states = tf.concat([self.states, episode_batch[0]], axis=0)
-        self.actions = tf.concat([self.actions, episode_batch[1]], axis=0)
-        self.rewards = tf.concat([self.rewards, episode_batch[2]], axis=0)
-        self.successors = tf.concat([self.successors, episode_batch[3]], axis=0)
-        self.terminals = tf.concat([self.terminals, episode_batch[4]], axis=0)
+        self.states = np.concatenate([self.states, episode_batch[0].astype('int16')], axis=0)
+        self.actions = np.concatenate([self.actions, episode_batch[1].astype('int8')], axis=0)
+        self.rewards = np.concatenate([self.rewards, episode_batch[2]], axis=0)
+        self.successors = np.concatenate([self.successors, episode_batch[3].astype('int16')], axis=0)
+        self.terminals = np.concatenate([self.terminals, episode_batch[4].astype('bool')], axis=0)
 
         #if the buffer is full or would be overflowing, we delete the episode_length oldest batches from each tensor
         if self.states.shape[0] > self.buffer_size:
@@ -55,11 +57,11 @@ class InMemoryReplayBuffer:
             overflow_length = self.states.shape[0] - self.buffer_size
 
             #through slicing we remove the exact number of elements needed to free enough space for the new episode
-            self.states = tf.slice(self.states, [overflow_length, *tuple([0 for _ in range(len(self.state_shape))])], [self.states.shape[0]-overflow_length, *self.state_shape])
-            self.actions = tf.slice(self.actions, [overflow_length, *tuple([0 for _ in range(len(self.action_shape))])], [self.actions.shape[0]-overflow_length, *self.action_shape])
-            self.rewards = tf.slice(self.rewards, [overflow_length, *tuple([0 for _ in range(len(self.reward_shape))])], [self.rewards.shape[0]-overflow_length, *self.reward_shape])
-            self.successors = tf.slice(self.successors, [overflow_length, *tuple([0 for _ in range(len(self.state_shape))])], [self.successors.shape[0]-overflow_length, *self.state_shape])
-            self.terminals = tf.slice(self.terminals, [overflow_length, 0], [self.terminals.shape[0]-overflow_length, 1])
+            self.states = self.states[overflow_length:]
+            self.actions = self.actions[overflow_length:]
+            self.rewards = self.rewards[overflow_length:]
+            self.successors = self.successors[overflow_length:]
+            self.terminals = self.terminals[overflow_length:]
 
             gc.collect()
 
@@ -82,12 +84,24 @@ class InMemoryReplayBuffer:
 
         if batch_count*batch_size > self.buffer_size:
             raise IndexError(f'Requested more samples than existing for buffer size: {self.buffer_size}')
-
+                                     
+        indices = np.random.choice(np.arange(self.buffer_size), size=int(batch_count*batch_size), replace=False)
+        states, actions, rewards, successors, terminals = (
+            tf.constant(self.states[(indices)],dtype=tf.float32),
+            tf.constant(self.actions[(indices)],dtype=tf.int32),
+            tf.constant(self.rewards[(indices)],dtype=tf.float32),
+            tf.constant(self.successors[(indices)],dtype=tf.float32),
+            tf.constant(self.terminals[(indices)],dtype=tf.bool)
+        )
+        
         #create a dataset with the requested parameters and returns it
-        dataset = tf.data.Dataset.from_tensor_slices((self.states, self.actions, self.rewards, self.successors, self.terminals))
-        dataset = dataset.shuffle(buffer_size=self.buffer_size)
+        dataset = tf.data.Dataset.from_tensor_slices((states, actions, rewards, successors, terminals))
+
         dataset = dataset.batch(batch_size)
         dataset = dataset.take(batch_count)
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
+        del states, actions, rewards, successors, terminals
+        gc.collect()
+        
         return dataset

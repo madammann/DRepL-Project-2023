@@ -10,13 +10,13 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from multiprocessing.pool import ThreadPool
-from multiprocessing import Pool
+from multiprocessing import Pool, TimeoutError
 
 from model import DeepQNetwork
 from env import Environment
 from replay_buffer import InMemoryReplayBuffer
 
-def sample_random_episode(env):
+def sample_random_episode(env, gamma):
     #we reset the environment and store the initial state observation
     env.reset()
     previous_state = env.observation
@@ -33,17 +33,23 @@ def sample_random_episode(env):
         #we overwrite the previous state
         previous_state = successor
 
+    #we overwrite the reward gamma-discounted for the markov chain since the original reward does not succeed
+    rewards = [reward * gamma**i for i in range(len(episode_batch))][::-1]
+    episode_batch = [(data[0], data[1], np.array(reward).astype(np.float32), data[3], data[4]) for data, reward in zip(episode_batch, rewards)]
+
     return episode_batch, reward
 
 def random_initial_sampling(buffer, env, params):
-    with tf.device('/cpu:0'):
-        with tqdm(total=params['buffer_size_in_batches']*params['batch_size'],desc='Filling initial buffer') as pbar:
-            #we create environments to sample with synchronously with thread pooling
-            envs = [deepcopy(env) for _ in range(3)] + [env]
+    with tqdm(total=params['buffer_size_in_batches']*params['batch_size'],desc='Filling initial buffer') as pbar:
+        #we create environments to sample with synchronously with thread pooling
+        envs = [deepcopy(env) for _ in range(5)] + [env]
 
-            with Pool(4) as pool:
-                while len(buffer) < params['buffer_size_in_batches']*params['batch_size']:
-                    episode_batches = pool.starmap(sample_random_episode,[(env,) for env in envs])
+        with Pool(6) as pool:
+            while len(buffer) < params['buffer_size_in_batches']*params['batch_size']:
+                episode_batches = [pool.apply_async(sample_random_episode,(env, params['gamma'])) for env in envs]
+
+                try:
+                    episode_batches = [episode_batch.get(timeout=30) for episode_batch in episode_batches]
 
                     sampling_returns = [elem for a, elem in episode_batches]
                     episode_batches = [elem for elem, b in episode_batches]
@@ -51,17 +57,21 @@ def random_initial_sampling(buffer, env, params):
                     episode_batches = [elem for stack in episode_batches for elem in stack]
 
                     #reshape the data into a list of tensors with the batch
-                    episode_batches = [tf.stack([episode[i] for episode in episode_batches]) for i in range(5)]
+                    episode_batches = [np.stack([episode[i] for episode in episode_batches]) for i in range(5)]
 
+                    #we update the counter
                     pbar.update(int(episode_batches[0].shape[0]))
 
                     #add the sampled episode to the buffer
                     buffer.add(episode_batches)
 
-            del envs
-            gc.collect()
+                except TimeoutError:
+                    pass
 
-    return np.mean([val.numpy() for val in sampling_returns])
+        del envs
+        gc.collect()
+
+    return np.mean([val for val in sampling_returns])
 
 def training_loop(model, target_model, buffer, params, epoch):
     with tf.device('/gpu:0'):
@@ -100,7 +110,7 @@ def target_update(model, target_model, params):
     for target_variable, model_variable in zip(target_model.trainable_variables, model.trainable_variables):
         target_variable.assign(params['polyak_avg_fac'] * target_variable + (1 - params['polyak_avg_fac']) * model_variable)
 
-def sample_episode_step(env, model, epsilon):
+def sample_episode_step(env, model, epsilon, gamma):
     #we reset the environment and store the initial state observation
     env.reset()
     episode_batch = []
@@ -112,20 +122,24 @@ def sample_episode_step(env, model, epsilon):
         policy = model(tf.expand_dims(previous_state, axis=0)) #we retrieve the policy
 
         #we grab the index of the policy with the highest prob
-        action, successor, reward, terminal = tf.constant([int(np.argmax(tf.squeeze(policy).numpy()))],dtype=tf.int32), None, None, None
+        action, successor, reward, terminal = np.argmax(tf.squeeze(policy).numpy()).reshape((1,)).astype(np.int8), None, None, None
 
         #if random <= episilon value at current epoch then we proceed with a random action
         if random.random() <= epsilon:
             action, successor, reward, terminal = env.do_random_action()
 
         else:
-            successor, reward, terminal = env.step(int(np.argmax(tf.squeeze(policy).numpy())))
+            successor, reward, terminal = env.step(int(action))
 
         #we store the s,a,r,s_prime,t element
         episode_batch += [(previous_state, action, reward, successor, terminal)]
 
         #we overwrite the previous state
         previous_state = successor
+
+    #we overwrite the reward gamma-discounted for the markov chain since the original reward does not succeed
+    rewards = [reward * gamma**i for i in range(len(episode_batch))][::-1]
+    episode_batch = [(data[0], data[1], np.array(reward).astype(np.float32), data[3], data[4]) for data, reward in zip(episode_batch, rewards)]
 
     return episode_batch, reward
 
@@ -137,35 +151,42 @@ def sampling(env, model, buffer, params, epoch):
     #we calculate the epsilon for the current epoch here
     epsilon = params['epsilon']*params['epsilon_decay']**epoch
 
+    envs = [deepcopy(env) for _ in range(5)] + [env]
+
     with tf.device('/cpu:0'):
         with tqdm(total=int(params['buffer_size_in_batches']*params['batch_size']*params['replay_ratio']),desc='Filling buffer with new elements') as pbar:
             count = 0
-            envs = [deepcopy(env) for _ in range(5)] + [env]
 
             #we loop while sampling until we have updated "replay_ratio" fraction of the replay buffer with new samples
             with ThreadPool(6) as pool:
                 while count < params['replay_ratio'] * params['buffer_size_in_batches'] * params['batch_size']:
-                    episode_batches = pool.starmap(sample_episode_step,[(env, model, epsilon) for env in envs])
+                    episode_batches = [pool.apply_async(sample_episode_step,(env, model, epsilon, params['gamma'])) for env in envs]
 
-                    sampling_returns = [elem for a, elem in episode_batches]
-                    episode_batches = [elem for elem, b in episode_batches]
+                    try:
+                        episode_batches = [episode_batch.get(timeout=30) for episode_batch in episode_batches]
 
-                    episode_batches = [elem for stack in episode_batches for elem in stack]
+                        sampling_returns = [elem for a, elem in episode_batches]
+                        episode_batches = [elem for elem, b in episode_batches]
 
-                    #reshape the data into a list of tensors with the batch
-                    episode_batches = [tf.stack([episode[i] for episode in episode_batches]) for i in range(5)]
+                        episode_batches = [elem for stack in episode_batches for elem in stack]
 
-                    #we update the counter(s)
-                    count += int(episode_batches[0].shape[0])
-                    pbar.update(int(episode_batches[0].shape[0]))
+                        #reshape the data into a list of tensors with the batch
+                        episode_batches = [np.stack([episode[i] for episode in episode_batches]) for i in range(5)]
 
-                    #add the sampled episode to the buffer
-                    buffer.add(episode_batches)
+                        #we update the counter(s)
+                        count += int(episode_batches[0].shape[0])
+                        pbar.update(int(episode_batches[0].shape[0]))
+
+                        #add the sampled episode to the buffer
+                        buffer.add(episode_batches)
+
+                    except TimeoutError:
+                        pass
 
             del envs
             gc.collect()
 
-    return np.mean([val.numpy() for val in sampling_returns])
+    return np.mean([val for val in sampling_returns])
 
 def train(params : dict, path : str, model_name : str, model_id : int, df):
     '''
